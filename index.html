@@ -181,6 +181,7 @@ label.small { display: block; color: var(--muted); font-size: 14px; margin: 10px
         <input type="file" id="importFile" accept="application/json,.json" hidden>
       </div>
       <p class="hint">Loading a saved file lets you continue on another device.</p>
+      <button class="linkbtn" id="switchBtn">Use a different rater code</button>
     </div>
   </section>
 
@@ -223,6 +224,7 @@ label.small { display: block; color: var(--muted); font-size: 14px; margin: 10px
   function load(key) { try { return JSON.parse(localStorage.getItem(key)); } catch (e) { return null; } }
   function save(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); return true; } catch (e) { return false; } }
   function keyFor(r) { return "ratings:" + DATA.form_id + ":" + r; }
+  var LAST = "ratings:" + DATA.form_id + ":last";  // who was rating, and where, so a reload carries on
 
   // seeded order per rater and turn, so A/B/C is stable for one rater but differs between raters
   function hash(s) { var h = 2166136261; for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
@@ -244,9 +246,12 @@ label.small { display: block; color: var(--muted); font-size: 14px; margin: 10px
   function persist() {
     store.updated = new Date().toISOString();
     var ok = save(keyFor(store.rater), store);
+    remember();
     $("savedLine").textContent = ok ? "Saved on this device" : "Could not save on this device - download your answers to keep them";
     progress();
   }
+
+  function remember() { save(LAST, { rater: store.rater, turn: $("rate").hidden ? null : cur }); }
 
   // ---- start screen
   (function caseSummary() {
@@ -287,7 +292,12 @@ label.small { display: block; color: var(--muted); font-size: 14px; margin: 10px
     $("countLine").textContent = countDone() + " of " + TURNS.length + " turns rated.";
     $("where").textContent = "";
   }
-  $("menuBtn").addEventListener("click", function () { if (!$("rate").hidden) recordTime(); renderParts(); show("partsScreen"); });
+  $("menuBtn").addEventListener("click", function () { if (!$("rate").hidden) recordTime(); renderParts(); show("partsScreen"); remember(); });
+  $("switchBtn").addEventListener("click", function () {
+    save(LAST, null); store = null;
+    $("raterInput").value = ""; $("beginBtn").disabled = true; $("resumeHint").textContent = "";
+    show("start");
+  });
 
   // ---- rating screen
   function partOf(i) { for (var k = 0; k < PARTS.length; k++) if (i >= PARTS[k].start && i <= PARTS[k].end) return k; return 0; }
@@ -383,7 +393,7 @@ label.small { display: block; color: var(--muted); font-size: 14px; margin: 10px
     $("rateHint").textContent = hint;
   }
 
-  function openTurn(i) { cur = i; shownAt = Date.now(); show("rate"); renderTurn(); }
+  function openTurn(i) { cur = i; shownAt = Date.now(); show("rate"); renderTurn(); remember(); }
   $("nextBtn").addEventListener("click", function () {
     recordTime();
     var p = PARTS[partOf(cur)];
@@ -391,6 +401,25 @@ label.small { display: block; color: var(--muted); font-size: 14px; margin: 10px
     openTurn(cur + 1);
   });
   $("backBtn").addEventListener("click", function () { recordTime(); openTurn(cur - 1); });
+
+  // keep the time spent when the page is closed or put in the background
+  document.addEventListener("visibilitychange", function () {
+    if (!store || $("rate").hidden) return;
+    if (document.visibilityState === "hidden") recordTime(); else shownAt = Date.now();
+  });
+
+  // ---- carry on after a reload
+  (function resume() {
+    var last = load(LAST);
+    var saved = last && last.rater ? load(keyFor(last.rater)) : null;
+    if (!saved) return;
+    store = saved;
+    $("raterInput").value = last.rater; $("beginBtn").disabled = false;
+    progress();
+    if (typeof last.turn === "number" && last.turn >= 0 && last.turn < TURNS.length) openTurn(last.turn);
+    else { renderParts(); show("partsScreen"); }
+    toast("Welcome back, " + last.rater + ". Your answers are saved.");
+  })();
 
   // ---- download / import
   $("downloadBtn").addEventListener("click", function () {
